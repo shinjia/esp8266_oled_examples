@@ -1,9 +1,7 @@
-
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_GFX.h>
 #include <Wire.h>
 #include <DHT.h>
-#include <ESP8266WiFi.h>
 
 // OLED 的尺寸
 #define SCREEN_WIDTH 128
@@ -19,27 +17,16 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define DHTTYPE DHT11  // 使用 DHT11 感測器
 DHT dht(DHTPIN, DHTTYPE);
 
-// WiFi SSID 和 密碼
-#define WLAN_SSID "Your_Wifi_SSID"
-#define WLAN_PASS "Your_Wifi_Password"
-
-// 按鍵引腳
-#define BUTTON_PIN 5
-
-// 模式控制變量
-int displayMode = 0;
-const int totalModes = 3;
+// 儀表板數據範圍
+const int temperatureMax = 50;  // 假設溫度最大值 50°C
+const int humidityMax = 100;    // 濕度最大值 100%
 
 // Timer control
 const long timer_delay_dht = 2000;
 unsigned long timer_next_dht;
 
-// 溫濕度變量
 float temperature = 0;
 float humidity = 0;
-
-// WiFi 訊號強度變量
-int32_t rssi = 0;
 
 void setup() {
   // 初始化序列埠
@@ -47,12 +34,6 @@ void setup() {
 
   // 初始化 DHT11
   dht.begin();
-
-  // 初始化按鍵
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-
-  // 初始化 WiFi 連接
-  connectToWiFi();
 
   // 設定 I2C 腳位，SDA 設為 GPIO14，SCL 設為 GPIO12
   Wire.begin(14, 12);
@@ -67,49 +48,28 @@ void setup() {
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
 
-  // 清除顯示器並顯示初始訊息
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.println("System Ready");
-  display.display();
+  // 畫標題
+  drawTitles();
 
+  // 初次畫兩個半圓形儀表板框架（外圈和刻度）
+  drawSemiCircleGaugeFrame(32, 48, 25);  // 左側溫度儀表
+  drawSemiCircleGaugeFrame(96, 48, 25);  // 右側濕度儀表
+  
   // 設置定時器
   timer_next_dht = millis();
 }
 
 void loop() {
-  // 檢查按鍵按下狀況並切換顯示模式
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    delay(200);  // 去除按鍵抖動
-    displayMode = (displayMode + 1) % totalModes;  // 切換模式
-    display.clearDisplay();  // 清除 OLED 顯示器
-  }
-
-  // 根據當前模式顯示
-  switch (displayMode) {
-    case 0:
-      showGraphicalDashboard();
-      break;
-    case 1:
-      showTextTemperatureHumidity();
-      break;
-    case 2:
-      showWiFiSignalStrength();
-      break;
-  }
-}
-
-// 顯示模式 1: 圖形儀表板顯示
-void showGraphicalDashboard() {
   if (millis() > timer_next_dht) {
     timer_next_dht = millis() + timer_delay_dht;
 
     // 讀取 DHT11 的溫度與濕度
-    humidity = dht.readHumidity();
-    temperature = dht.readTemperature();
+    float h = dht.readHumidity();
+    float t = dht.readTemperature();
 
-    // 檢查是否讀取失敗
-    if (isnan(humidity) || isnan(temperature)) {
+    // 檢查是否讀取失敗，並顯示錯誤訊息
+    if (isnan(h) || isnan(t)) {
+      Serial.println(F("無法從 DHT 讀取數據"));
       display.clearDisplay();
       display.setCursor(0, 0);
       display.println("Error reading DHT11");
@@ -117,96 +77,44 @@ void showGraphicalDashboard() {
       return;
     }
 
-    // 清除顯示器
+    // 更新溫濕度值
+    temperature = t;
+    humidity = h;
+
+    // 清除舊的指針和數值，保持標題和外圈不變
     display.clearDisplay();
-    drawGraphicalDashboard(temperature, humidity);
+    drawTitles();
+    drawSemiCircleGaugeFrame(32, 48, 25);  // 左側溫度儀表
+    drawSemiCircleGaugeFrame(96, 48, 25);  // 右側濕度儀表
+
+    // 更新儀表板上的指針和數值
+    drawSemiCircleGauge(32, 48, 25, temperature, temperatureMax);  // 更新溫度指針
+    drawSemiCircleGauge(96, 48, 25, humidity, humidityMax);     // 更新濕度指針
+
+    // 更新顯示器
     display.display();
   }
 }
 
-void drawGraphicalDashboard(float temp, float humi) {
-  // 畫標題
-  display.setCursor(10, 0);
+// 畫標題，並在右側顯示當前的溫度和濕度
+void drawTitles() {
+  // 顯示左上角的 "Temp" 標題
+  display.setCursor(10, 6);
   display.print("Temp:");
-  display.print(temp, 0);
-  display.setCursor(80, 0);
+  display.print(temperature, 0);  // 顯示實際的溫度數值
+  
+  // 顯示右上角的 "Humi" 標題
+  display.setCursor(80, 6);
   display.print("Humi:");
-  display.print(humi, 0);
-
-  // 繪製半圓形儀表板
-  drawSemiCircleGaugeFrame(32, 48, 25);  // 左側溫度儀表
-  drawSemiCircleGaugeFrame(96, 48, 25);  // 右側濕度儀表
-
-  // 更新儀表板上的指針
-  drawSemiCircleGauge(32, 48, 25, temp, 50);  // 更新溫度指針
-  drawSemiCircleGauge(96, 48, 25, humi, 100);  // 更新濕度指針
+  display.print(humidity, 0);  // 顯示實際的濕度數值
 }
 
-// 顯示模式 2: 文字顯示溫濕度
-void showTextTemperatureHumidity() {
-  if (millis() > timer_next_dht) {
-    timer_next_dht = millis() + timer_delay_dht;
-
-    // 讀取 DHT11 的溫度與濕度
-    humidity = dht.readHumidity();
-    temperature = dht.readTemperature();
-
-    // 檢查是否讀取失敗
-    if (isnan(humidity) || isnan(temperature)) {
-      display.clearDisplay();
-      display.setCursor(0, 0);
-      display.println("Error reading DHT11");
-      display.display();
-      return;
-    }
-
-    // 清除顯示器
-    display.clearDisplay();
-    display.setCursor(30, 4);
-    display.print("Hello DHT11 ");
-
-    // 顯示溫度
-    display.setCursor(0, 16);
-    display.print("Temperature: ");
-    display.print(temperature, 1);
-    display.println(" C");
-
-    // 顯示濕度
-    display.setCursor(0, 32);
-    display.print("Humidity: ");
-    display.print(humidity, 1);
-    display.println(" %");
-
-    display.display();
-  }
-}
-
-// 顯示模式 3: WiFi 訊號強度顯示
-void showWiFiSignalStrength() {
-  // 取得 Wi-Fi 訊號強度（RSSI）
-  rssi = WiFi.RSSI();
-
-  // 清除顯示器
-  display.clearDisplay();
-
-  // 顯示標題
-  display.setCursor(0, 0);
-  display.print("WiFi Signal Strength");
-
-  // 顯示訊號強度數值
-  display.setCursor(20, 24);
-  display.setTextSize(2);
-  display.print(rssi);
-  display.println(" dBm");
-  display.setTextSize(1);
-
-  // 更新顯示器
-  display.display();
-}
-
-// 畫半圓形儀表板
+// 畫半圓形儀表板的框架，顯示在 (x, y) 中心點，半徑 r，不包括指針
 void drawSemiCircleGaugeFrame(int16_t x, int16_t y, int16_t r) {
-  drawArc(x, y, r, 180, 360, SSD1306_WHITE);
+  // 畫半圓形
+  drawArc(x, y, r, 180, 360, SSD1306_WHITE);  // 顛倒顯示的儀表，從180度到360度
+
+  // 畫刻度（從 180 到 360 度）
   for (int angle = 180; angle <= 360; angle += 30) {
     float radian = angle * PI / 180;
     int x0 = x + r * cos(radian);
@@ -217,15 +125,26 @@ void drawSemiCircleGaugeFrame(int16_t x, int16_t y, int16_t r) {
   }
 }
 
+// 畫半圓形儀表板，顯示在 (x, y) 中心點，半徑 r，數值 value
 void drawSemiCircleGauge(int16_t x, int16_t y, int16_t r, float value, float max_value) {
+  // 計算指針角度（從 180 度到 360 度，顛倒）
   float angle = map(value, 0, max_value, 180, 360);
   float radian = angle * PI / 180;
+
+  // 計算指針的終點
   int x1 = x + (r - 5) * cos(radian);
   int y1 = y + (r - 5) * sin(radian);
+
+  // 畫指針
   display.drawLine(x, y, x1, y1, SSD1306_WHITE);
+
+  // 顯示數值
+  display.setCursor(x - 8, y + r + 10);
+  display.setTextSize(1);
+  display.print(value, 0); // 數值無小數點
 }
 
-// 自定義函數，用於繪製弧形
+// 自定義函數，用於繪製弧形（逐點畫弧形）
 void drawArc(int16_t x, int16_t y, int16_t r, int startAngle, int endAngle, int color) {
   for (int angle = startAngle; angle <= endAngle; angle++) {
     float radian = angle * PI / 180;
@@ -233,18 +152,4 @@ void drawArc(int16_t x, int16_t y, int16_t r, int startAngle, int endAngle, int 
     int y1 = y + r * sin(radian);
     display.drawPixel(x1, y1, color);
   }
-}
-
-// 連接到 WiFi
-void connectToWiFi() {
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(WLAN_SSID);
-  WiFi.begin(WLAN_SSID, WLAN_PASS);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println();
-  Serial.println("WiFi connected");
 }
